@@ -9,6 +9,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <cstddef>
 #include <cmath>
 #include <cstdio>
@@ -19,6 +20,8 @@
 using glm::mat4;
 using glm::vec2;
 using glm::vec3;
+using glm::vec4;
+
 
 // ============================================================ shaders
 static const char* VS = R"(#version 330 core
@@ -266,11 +269,12 @@ static mat4 part(const mat4& parent, vec3 pos, vec3 size) {
 // ============================================================ estado do jogo e camera
 struct Item { vec3 pos; int req; bool got; };   // req: 0 livre, 1 armario aberto, 2 gaveta aberta
 struct Game {
-    bool lampOn = true, ended = false, wireframe = false;
+    bool lampOn = true, started = false, ended = false, wireframe = false;
     float closet = 0, closetT = 0, drawer = 0, drawerT = 0;
     std::vector<Item> items;
     double start = 0, endTime = 0;
     std::string result;
+    std::string reason;  // motivo do fim, usado na tela final do HUD
 } G;
 
 static const double TIME_LIMIT = 180.0;
@@ -288,6 +292,7 @@ static int foundCount() { int n = 0; for (auto& i : G.items) n += i.got; return 
 static void endGame(const char* motivo) {
     if (G.ended) return;
     G.ended = true;
+    G.reason = motivo;
     G.endTime = glfwGetTime() - G.start;
     char buf[200];
     std::snprintf(buf, sizeof buf, "%s | Itens: %d/%d | Tempo: %d:%02d | ESC para sair",
@@ -298,6 +303,11 @@ static void endGame(const char* motivo) {
 
 static void keyCb(GLFWwindow* w, int key, int, int action, int) {
     if (action != GLFW_PRESS) return;
+    if (!G.started) {
+        if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) { G.started = true; G.start = glfwGetTime(); }
+        else if (key == GLFW_KEY_ESCAPE) glfwSetWindowShouldClose(w, 1);
+        return;
+    }
     if (key == GLFW_KEY_ESCAPE) { if (!G.ended) endGame("Voce desistiu"); else glfwSetWindowShouldClose(w, 1); }
     if (key == GLFW_KEY_E) pressE = true;
     if (key == GLFW_KEY_F1) G.wireframe = !G.wireframe;
@@ -306,7 +316,7 @@ static void mouseCb(GLFWwindow*, double x, double y) {
     static bool first = true; static double lx = 0, ly = 0;
     if (first) { lx = x; ly = y; first = false; }
     double dx = x - lx, dy = ly - y; lx = x; ly = y;
-    if (G.ended) return;
+    if (G.ended || !G.started) return;
     yaw += (float)dx * 0.1f;
     pitch = glm::clamp(pitch + (float)dy * 0.1f, -89.0f, 89.0f);
 }
@@ -361,6 +371,174 @@ static void interact(const Target& t) {
         case 1: G.closetT = G.closetT > 0 ? 0.0f : 1.8f; break;
         case 2: G.drawerT = G.drawerT > 0 ? 0.0f : 0.4f; break;
         case 3: G.lampOn = !G.lampOn; break;
+    }
+}
+
+// ============================================================ HUD 2D
+static const char* HUD_VS = R"(#version 330 core
+layout(location=0) in vec2 aPos;      // posicao em pixels
+layout(location=1) in vec4 aColor;
+uniform vec2 uScreen;
+out vec4 vColor;
+void main(){
+    vec2 ndc = vec2(aPos.x / uScreen.x * 2.0 - 1.0, 1.0 - aPos.y / uScreen.y * 2.0);
+    gl_Position = vec4(ndc, 0.0, 1.0);
+    vColor = aColor;
+})";
+
+static const char* HUD_FS = R"(#version 330 core
+in vec4 vColor;
+out vec4 FragColor;
+void main(){ FragColor = vColor; })";
+
+static GLuint gHudProg = 0, gHudVao = 0, gHudVbo = 0;
+static std::vector<float> gHudVerts;
+
+
+struct Glyph { char c; unsigned char r[7]; };
+static const Glyph FONT[] = {
+    {' ', {0x00,0x00,0x00,0x00,0x00,0x00,0x00}},
+    {'0', {0x0E,0x11,0x13,0x15,0x19,0x11,0x0E}}, {'1', {0x04,0x0C,0x04,0x04,0x04,0x04,0x0E}},
+    {'2', {0x0E,0x11,0x01,0x02,0x04,0x08,0x1F}}, {'3', {0x1F,0x02,0x04,0x02,0x01,0x11,0x0E}},
+    {'4', {0x02,0x06,0x0A,0x12,0x1F,0x02,0x02}}, {'5', {0x1F,0x10,0x1E,0x01,0x01,0x11,0x0E}},
+    {'6', {0x06,0x08,0x10,0x1E,0x11,0x11,0x0E}}, {'7', {0x1F,0x01,0x02,0x04,0x08,0x08,0x08}},
+    {'8', {0x0E,0x11,0x11,0x0E,0x11,0x11,0x0E}}, {'9', {0x0E,0x11,0x11,0x0F,0x01,0x02,0x0C}},
+    {'A', {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11}}, {'B', {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E}},
+    {'C', {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E}}, {'D', {0x1E,0x11,0x11,0x11,0x11,0x11,0x1E}},
+    {'E', {0x1F,0x10,0x10,0x1E,0x10,0x10,0x1F}}, {'F', {0x1F,0x10,0x10,0x1E,0x10,0x10,0x10}},
+    {'G', {0x0E,0x11,0x10,0x17,0x11,0x11,0x0F}}, {'H', {0x11,0x11,0x11,0x1F,0x11,0x11,0x11}},
+    {'I', {0x0E,0x04,0x04,0x04,0x04,0x04,0x0E}}, {'J', {0x07,0x02,0x02,0x02,0x02,0x12,0x0C}},
+    {'K', {0x11,0x12,0x14,0x18,0x14,0x12,0x11}}, {'L', {0x10,0x10,0x10,0x10,0x10,0x10,0x1F}},
+    {'M', {0x11,0x1B,0x15,0x15,0x11,0x11,0x11}}, {'N', {0x11,0x19,0x15,0x13,0x11,0x11,0x11}},
+    {'O', {0x0E,0x11,0x11,0x11,0x11,0x11,0x0E}}, {'P', {0x1E,0x11,0x11,0x1E,0x10,0x10,0x10}},
+    {'Q', {0x0E,0x11,0x11,0x11,0x15,0x12,0x0D}}, {'R', {0x1E,0x11,0x11,0x1E,0x14,0x12,0x11}},
+    {'S', {0x0F,0x10,0x10,0x0E,0x01,0x01,0x1E}}, {'T', {0x1F,0x04,0x04,0x04,0x04,0x04,0x04}},
+    {'U', {0x11,0x11,0x11,0x11,0x11,0x11,0x0E}}, {'V', {0x11,0x11,0x11,0x11,0x11,0x0A,0x04}},
+    {'W', {0x11,0x11,0x11,0x15,0x15,0x1B,0x11}}, {'X', {0x11,0x11,0x0A,0x04,0x0A,0x11,0x11}},
+    {'Y', {0x11,0x11,0x0A,0x04,0x04,0x04,0x04}}, {'Z', {0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}},
+    {':', {0x00,0x04,0x04,0x00,0x04,0x04,0x00}}, {'/', {0x01,0x01,0x02,0x04,0x08,0x10,0x10}},
+    {'[', {0x0E,0x08,0x08,0x08,0x08,0x08,0x0E}}, {']', {0x0E,0x02,0x02,0x02,0x02,0x02,0x0E}},
+    {'!', {0x04,0x04,0x04,0x04,0x04,0x00,0x04}}, {'.', {0x00,0x00,0x00,0x00,0x00,0x0C,0x0C}},
+    {'-', {0x00,0x00,0x00,0x1F,0x00,0x00,0x00}},
+};
+
+static void hudInit() {
+    GLuint v = compileShader(GL_VERTEX_SHADER, HUD_VS), f = compileShader(GL_FRAGMENT_SHADER, HUD_FS);
+    gHudProg = glCreateProgram();
+    glAttachShader(gHudProg, v); glAttachShader(gHudProg, f); glLinkProgram(gHudProg);
+    GLint ok = 0; glGetProgramiv(gHudProg, GL_LINK_STATUS, &ok);
+    if (!ok) { char log[1024]; glGetProgramInfoLog(gHudProg, 1024, nullptr, log); std::fprintf(stderr, "Link HUD: %s\n", log); }
+    glDeleteShader(v); glDeleteShader(f);
+    glGenVertexArrays(1, &gHudVao); glGenBuffers(1, &gHudVbo);
+    glBindVertexArray(gHudVao);
+    glBindBuffer(GL_ARRAY_BUFFER, gHudVbo);
+    glEnableVertexAttribArray(0); glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)0);
+    glEnableVertexAttribArray(1); glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 6 * sizeof(float), (void*)(2 * sizeof(float)));
+    glBindVertexArray(0);
+}
+
+static void hudRect(float x, float y, float w, float h, vec4 c) {
+    const float q[6][2] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y}, {x + w, y + h}, {x, y + h}};
+    for (const auto& p : q) gHudVerts.insert(gHudVerts.end(), {p[0], p[1], c.r, c.g, c.b, c.a});
+}
+static float hudTextWidth(const std::string& s, float sc) { return s.empty() ? 0.0f : (s.size() * 6 - 1) * sc; }
+static void hudGlyphs(float x, float y, float sc, const std::string& s, vec4 c) {
+    for (char ch : s) {
+        ch = (char)std::toupper((unsigned char)ch);
+        for (const Glyph& g : FONT)
+            if (g.c == ch) {
+                for (int row = 0; row < 7; row++)
+                    for (int col = 0; col < 5; col++)
+                        if (g.r[row] & (1 << (4 - col))) hudRect(x + col * sc, y + row * sc, sc, sc, c);
+                break;
+            }
+        x += 6 * sc;
+    }
+}
+static void hudText(float x, float y, float sc, const std::string& s, vec4 c) {
+    hudGlyphs(x + sc, y + sc, sc, s, vec4(0, 0, 0, 0.6f * c.a));
+    hudGlyphs(x, y, sc, s, c);
+}
+static void hudTextCentered(float cx, float y, float sc, const std::string& s, vec4 c) {
+    hudText(cx - hudTextWidth(s, sc) / 2, y, sc, s, c);
+}
+static void hudFlush(int w, int h) {
+    if (gHudVerts.empty()) return;
+    glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glUseProgram(gHudProg);
+    glUniform2f(glGetUniformLocation(gHudProg, "uScreen"), (float)w, (float)h);
+    glBindVertexArray(gHudVao);
+    glBindBuffer(GL_ARRAY_BUFFER, gHudVbo);
+    glBufferData(GL_ARRAY_BUFFER, gHudVerts.size() * sizeof(float), gHudVerts.data(), GL_STREAM_DRAW);
+    glDrawArrays(GL_TRIANGLES, 0, (GLsizei)(gHudVerts.size() / 6));
+    glBindVertexArray(0);
+    glDisable(GL_BLEND); glEnable(GL_CULL_FACE); glEnable(GL_DEPTH_TEST);
+    gHudVerts.clear();
+}
+
+static std::string mmss(int sec) {
+    char b[16]; std::snprintf(b, sizeof b, "%d:%02d", sec / 60, sec % 60);
+    return b;
+}
+
+static void drawHud(int w, int h, double now, const Target& tgt) {
+    const float sc = std::max(2.0f, std::floor(h / 240.0f));   
+    const float pad = 6 * sc, line = 7 * sc;
+    const vec4 white(1, 1, 1, 1), gold(1.0f, 0.82f, 0.2f, 1), red(1.0f, 0.35f, 0.3f, 1), panel(0, 0, 0, 0.45f);
+    const int total = (int)G.items.size();
+
+    if (!G.started) {
+        hudRect(0, 0, (float)w, (float)h, vec4(0, 0, 0, 0.75f));
+        const float cx = w / 2.0f;
+        float y = h * 0.12f;
+        hudTextCentered(cx, y, sc * 2, "ACHE AS MOEDAS", gold);
+        y += 3.5f * line;
+        hudTextCentered(cx, y, sc, "ENCONTRE AS " + std::to_string(total) + " MOEDAS ESCONDIDAS EM " + std::to_string((int)(TIME_LIMIT / 60)) + " MINUTOS", white);
+        y += 3.0f * line;
+        const char* cmds[] = {
+            "W A S D: ANDAR", "SHIFT: CORRER", "MOUSE: OLHAR", "E: PEGAR MOEDA",
+            "F: ABRIR / LIGAR", "F1: WIREFRAME", "ESC: DESISTIR"
+        };
+        for (const char* c : cmds) { hudTextCentered(cx, y, sc, c, white); y += 1.8f * line; }
+        y += 1.5f * line;
+        float blink = 0.6f + 0.4f * (float)std::sin(now * 4.0);
+        hudTextCentered(cx, y, sc, "PRESSIONE ENTER PARA COMECAR", vec4(gold.r, gold.g, gold.b, blink));
+        return;
+    }
+
+    if (!G.ended) {
+        int left = (int)std::max(0.0, std::ceil(TIME_LIMIT - (now - G.start)));
+        // canto superior esquerdo: moedas
+        std::string a = "MOEDAS: " + std::to_string(foundCount()) + "/" + std::to_string(total);
+        hudRect(pad, pad, hudTextWidth(a, sc) + 2 * pad, line + 2 * pad, panel);
+        hudText(2 * pad, 2 * pad, sc, a, gold);
+        // canto superior direito: tempo (vermelho nos ultimos 30 s)
+        std::string b = "TEMPO: " + mmss(left);
+        float bw = hudTextWidth(b, sc);
+        hudRect(w - bw - 3 * pad, pad, bw + 2 * pad, line + 2 * pad, panel);
+        hudText(w - bw - 2 * pad, 2 * pad, sc, b, left <= 30 ? red : white);
+        // mira no centro
+        float cx = w / 2.0f, cy = h / 2.0f;
+        hudRect(cx - 7, cy - 1, 14, 2, vec4(1, 1, 1, 0.85f));
+        hudRect(cx - 1, cy - 7, 2, 14, vec4(1, 1, 1, 0.85f));
+        // dica de interacao abaixo da mira
+        if (tgt.kind >= 0) {
+            std::string t = tgt.label;
+            float tw = hudTextWidth(t, sc);
+            hudRect(cx - tw / 2 - pad, cy + 5 * sc - pad, tw + 2 * pad, line + 2 * pad, panel);
+            hudTextCentered(cx, cy + 5 * sc, sc, t, white);
+        }
+    } else {
+        // tela final: escurece a cena e mostra o resultado
+        hudRect(0, 0, (float)w, (float)h, vec4(0, 0, 0, 0.65f));
+        float cx = w / 2.0f, y = h / 2.0f - 18 * sc;
+        bool win = foundCount() == total;
+        hudTextCentered(cx, y, sc * 2, G.reason, win ? gold : red);
+        hudTextCentered(cx, y + 3.2f * line, sc, "MOEDAS: " + std::to_string(foundCount()) + "/" + std::to_string(total), white);
+        hudTextCentered(cx, y + 4.6f * line, sc, "TEMPO: " + mmss((int)G.endTime), white);
+        hudTextCentered(cx, y + 6.6f * line, sc, "ESC PARA SAIR", vec4(0.8f, 0.8f, 0.8f, 1));
     }
 }
 
@@ -476,6 +654,7 @@ int main() {
     gProg = buildProgram();
     Meshes M{makeCube(), makeCylinder(), makeSphere()};
     Textures T = makeTextures();
+    hudInit();
 
     G.items = {
         {{1.0f, 0.1f, -3.7f}, 1, false},    // dentro do armario
@@ -486,20 +665,20 @@ int main() {
         {{1.0f, 2.32f, -3.7f}, 0, false},   // em cima do armario
     };
     G.start = glfwGetTime();
-    double last = G.start, titleTimer = 0;
+    double last = G.start;
 
     while (!glfwWindowShouldClose(win)) {
         double now = glfwGetTime(), dt = now - last; last = now;
         glfwPollEvents();
 
         // ---- jogo
-        if (!G.ended) {
+        if (G.started && !G.ended) {
             if (TIME_LIMIT - (now - G.start) <= 0) endGame("Tempo esgotado");
             else if (foundCount() == (int)G.items.size()) endGame("Voce venceu!");
         }
 
         // ---- movimento WASD com colisao (eixos separados)
-        if (!G.ended) {
+        if (G.started && !G.ended) {
             vec3 fwd = glm::normalize(vec3(camFront().x, 0, camFront().z));
             vec3 right = glm::normalize(glm::cross(fwd, vec3(0, 1, 0)));
             vec3 dir(0);
@@ -516,7 +695,7 @@ int main() {
         }
 
         // ---- interacao
-        Target tgt = G.ended ? Target() : pick(now);
+        Target tgt = (G.ended || !G.started) ? Target() : pick(now);
         if (pressE && tgt.kind >= 0) interact(tgt);
         pressE = false;
 
@@ -551,19 +730,9 @@ int main() {
         glUniform1i(U("uLampOn"), G.lampOn ? 1 : 0);
         drawScene(M, T, now);
 
-        // ---- "HUD" no titulo da janela (ate implementar texto/quads 2D)
-        titleTimer += dt;
-        if (titleTimer > 0.15) {
-            titleTimer = 0;
-            char buf[256];
-            if (G.ended) std::snprintf(buf, sizeof buf, "%s", G.result.c_str());
-            else {
-                int left = (int)std::max(0.0, TIME_LIMIT - (now - G.start));
-                std::snprintf(buf, sizeof buf, "Itens %d/%d | Tempo %d:%02d | %s",
-                              foundCount(), (int)G.items.size(), left / 60, left % 60, tgt.kind >= 0 ? tgt.label : "");
-            }
-            glfwSetWindowTitle(win, buf);
-        }
+        // ---- HUD 2D por cima da cena
+        drawHud(w, h, now, tgt);
+        hudFlush(w, h);
         glfwSwapBuffers(win);
     }
     glfwTerminate();
