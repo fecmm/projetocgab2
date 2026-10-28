@@ -20,5 +20,6 @@ FetchContent_MakeAvailable(glfw glm)
 
 # GLAD (v1, OpenGL 3.3 Core) deve estar em external/glad (veja README)
 add_executable(cena src/main.cpp external/glad/src/glad.c)
-target_include_directories(cena PRIVATE external/glad/include)
+target_include_directories(cena PRIVATE external/glad/include external/stb)
+target_compile_definitions(cena PRIVATE ASSET_DIR="${CMAKE_SOURCE_DIR}/assets")
 target_link_libraries(cena PRIVATE glfw glm::glm)

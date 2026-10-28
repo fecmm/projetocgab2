@@ -17,6 +17,9 @@
 #include <string>
 #include <vector>
 
+#define STB_IMAGE_IMPLEMENTATION
+#include <stb_image.h>
+
 using glm::mat4;
 using glm::vec2;
 using glm::vec3;
@@ -205,7 +208,29 @@ static GLuint makeTexture(int w, int h, const std::function<vec3(int, int)>& f) 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
     return t;
 }
-struct Textures { GLuint white, wood, floor, wall, fabric, metal; };
+
+static GLuint loadTextureFile(const std::string& name) {
+    const std::string path = std::string(ASSET_DIR) + "/" + name;
+    int w = 0, h = 0, n = 0;
+    stbi_set_flip_vertically_on_load(1);   
+    unsigned char* d = stbi_load(path.c_str(), &w, &h, &n, 3);
+    if (!d) {
+        std::fprintf(stderr, "Falha ao carregar textura: %s\n", path.c_str());
+        return makeTexture(1, 1, [](int, int) { return vec3(0.8f); });   // cinza claro no lugar
+    }
+    GLuint t; glGenTextures(1, &t); glBindTexture(GL_TEXTURE_2D, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, w, h, 0, GL_RGB, GL_UNSIGNED_BYTE, d);
+    glGenerateMipmap(GL_TEXTURE_2D);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    stbi_image_free(d);
+    return t;
+}
+
+struct Textures { GLuint white, wood, floor, wall, fabric, metal, rug, paint1, paint2; };
 static Textures makeTextures() {
     Textures t;
     t.white = makeTexture(1, 1, [](int, int) { return vec3(1.0f); });
@@ -233,6 +258,11 @@ static Textures makeTextures() {
     t.metal = makeTexture(32, 32, [](int x, int y) {
         return vec3(0.75f + 0.1f * hash2(x, y / 2));
     });
+
+    t.rug    = loadTextureFile("tapete.png");
+    t.paint1 = loadTextureFile("quadro1.png");
+    t.paint2 = loadTextureFile("quadro2.png");
+
     return t;
 }
 
@@ -247,6 +277,7 @@ static const Material M_CEIL   = mat(vec3(0.6f), vec3(0.9f), vec3(0.0f), 2);
 static const Material M_METAL  = mat(vec3(0.3f), vec3(0.6f), vec3(0.95f), 96);       // metal brilhante
 static const Material M_GOLD   = mat(vec3(0.4f), vec3(1.0f, 0.82f, 0.2f), vec3(0.9f, 0.8f, 0.4f), 64, vec3(0.30f, 0.22f, 0.02f));
 static Material fabricMat(vec3 tint) { return mat(vec3(0.5f), tint, vec3(0.03f), 4); }
+static const Material M_GLASS  = mat(vec3(0.5f), vec3(0.55f, 0.75f, 0.95f), vec3(0.9f), 128, vec3(0.20f, 0.30f, 0.45f));   // vidro azulado
 
 static void draw(const Mesh& m, const mat4& model, const Material& mt, GLuint tex, vec2 uv = vec2(1.0f)) {
     glUniformMatrix4fv(U("uModel"), 1, GL_FALSE, glm::value_ptr(model));
@@ -275,6 +306,8 @@ struct Game {
     double start = 0, endTime = 0;
     std::string result;
     std::string reason;  // motivo do fim, usado na tela final do HUD
+    bool fanOn = false;        // ventilador de teto ligado?
+    float fanAngle = 0;
 } G;
 
 static const double TIME_LIMIT = 180.0;
@@ -282,6 +315,9 @@ static const double TIME_LIMIT = 180.0;
 static vec3 camPos(0.0f, 1.7f, 3.0f);
 static float yaw = -90.0f, pitch = 0.0f;
 static bool pressE = false;
+static bool pressF = false;
+static bool pressG = false;
+
 
 static vec3 camFront() {
     float y = glm::radians(yaw), p = glm::radians(pitch);
@@ -310,6 +346,8 @@ static void keyCb(GLFWwindow* w, int key, int, int action, int) {
     }
     if (key == GLFW_KEY_ESCAPE) { if (!G.ended) endGame("Voce desistiu"); else glfwSetWindowShouldClose(w, 1); }
     if (key == GLFW_KEY_E) pressE = true;
+    if (key == GLFW_KEY_F) pressF = true;
+    if (key == GLFW_KEY_G) pressG = true;
     if (key == GLFW_KEY_F1) G.wireframe = !G.wireframe;
 }
 static void mouseCb(GLFWwindow*, double x, double y) {
@@ -360,9 +398,10 @@ static Target pick(double t) {
     };
     for (int i = 0; i < (int)G.items.size(); i++)
         if (!G.items[i].got && available(G.items[i])) consider(itemPos(i, t), 0, i, "[E] Pegar item");
-    consider(vec3(1.0f, 1.1f, -3.4f), 1, 0, G.closetT > 0 ? "[E] Fechar armario" : "[E] Abrir armario");
-    consider(vec3(-2.05f, 0.64f, -2.9f + G.drawer), 2, 0, G.drawerT > 0 ? "[E] Fechar gaveta" : "[E] Abrir gaveta");
-    consider(vec3(-3.1f, 1.0f, -3.2f), 3, 0, G.lampOn ? "[E] Apagar abajur" : "[E] Acender abajur");
+    consider(vec3(1.0f, 1.1f, -3.4f), 1, 0, G.closetT > 0 ? "[F] Fechar armario" : "[F] Abrir armario");
+    consider(vec3(-2.05f, 0.64f, -2.9f + G.drawer), 2, 0, G.drawerT > 0 ? "[F] Fechar gaveta" : "[F] Abrir gaveta");
+    consider(vec3(-3.1f, 1.0f, -3.2f), 3, 0, G.lampOn ? "[G] Apagar abajur" : "[G] Acender abajur");
+    consider(vec3(0.0f, 2.7f, 0.5f), 5, 0, G.fanOn ? "[G] Desligar ventilador" : "[G] Ligar ventilador");
     return best;
 }
 static void interact(const Target& t) {
@@ -371,6 +410,7 @@ static void interact(const Target& t) {
         case 1: G.closetT = G.closetT > 0 ? 0.0f : 1.8f; break;
         case 2: G.drawerT = G.drawerT > 0 ? 0.0f : 0.4f; break;
         case 3: G.lampOn = !G.lampOn; break;
+        case 5: G.fanOn = !G.fanOn; break;
     }
 }
 
@@ -499,7 +539,7 @@ static void drawHud(int w, int h, double now, const Target& tgt) {
         y += 3.0f * line;
         const char* cmds[] = {
             "W A S D: ANDAR", "SHIFT: CORRER", "MOUSE: OLHAR", "E: PEGAR MOEDA",
-            "F: ABRIR / LIGAR", "F1: WIREFRAME", "ESC: DESISTIR"
+            "F: ABRIR / FECHAR", "G: LIGAR / DESLIGAR", "F1: WIREFRAME", "ESC: DESISTIR"
         };
         for (const char* c : cmds) { hudTextCentered(cx, y, sc, c, white); y += 1.8f * line; }
         y += 1.5f * line;
@@ -558,7 +598,7 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     draw(M.cube, part(I, {-4.05f, 1.5f, 0}, {0.1f, 3, 8.2f}), M_WALL, T.wall, {8, 3});
 
     // --- tapete
-    draw(M.cube, part(I, {0, 0.01f, 0.5f}, {2.5f, 0.02f, 1.8f}), fabricMat({0.85f, 0.35f, 0.35f}), T.fabric, {6, 4});
+    draw(M.cube, part(I, {0, 0.01f, 0.5f}, {2.5f, 0.02f, 1.8f}), fabricMat(vec3(1.0f)), T.rug);
 
     // --- mesa (tampo + 4 pernas) com gaveta deslizante e abajur
     mat4 D = glm::translate(I, vec3(-2.5f, 0, -3.2f));
@@ -620,6 +660,35 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     const vec3 bookTint[5] = {{0.8f, 0.2f, 0.2f}, {0.2f, 0.5f, 0.8f}, {0.2f, 0.7f, 0.3f}, {0.9f, 0.7f, 0.2f}, {0.6f, 0.3f, 0.7f}};
     for (int i = 0; i < 5; i++)
         draw(M.cube, part(S, {-0.45f + 0.15f * i, 0.76f, 0}, {0.1f, 0.28f, 0.2f}), fabricMat(bookTint[i]), T.fabric);
+
+    // --- janela na parede leste (moldura de madeira, travessas e vidro)
+    mat4 W = glm::translate(I, vec3(3.96f, 1.6f, 1.8f));
+    draw(M.cube, part(W, {0,  0.6f, 0}, {0.06f, 0.06f, 1.3f}), M_WOOD, T.wood);        // barra de cima
+    draw(M.cube, part(W, {0, -0.6f, 0}, {0.06f, 0.06f, 1.3f}), M_WOOD, T.wood);        // barra de baixo
+    draw(M.cube, part(W, {0, 0, -0.62f}, {0.06f, 1.2f, 0.06f}), M_WOOD, T.wood);       // lateral
+    draw(M.cube, part(W, {0, 0,  0.62f}, {0.06f, 1.2f, 0.06f}), M_WOOD, T.wood);       // lateral
+    draw(M.cube, part(W, {0, 0, 0}, {0.05f, 1.2f, 0.04f}), M_WOOD, T.wood);            // travessa vertical
+    draw(M.cube, part(W, {0, 0, 0}, {0.05f, 0.04f, 1.3f}), M_WOOD, T.wood);            // travessa horizontal
+    draw(M.cube, part(W, {-0.04f, -0.64f, 0}, {0.14f, 0.04f, 1.45f}), M_WOOD, T.wood); // parapeito
+    draw(M.cube, part(W, {0.02f, 0, 0}, {0.02f, 1.14f, 1.24f}), M_GLASS, T.white);     // vidro
+
+    // --- quadros na parede norte (moldura + tela com ceu, chao e sol)
+    auto quadro = [&](vec3 pos, GLuint tex) {
+        mat4 Q = glm::translate(I, pos);
+        draw(M.cube, part(Q, {0, 0, 0}, {0.9f, 0.7f, 0.04f}), M_WOOD, T.wood);                       // moldura
+        draw(M.cube, part(Q, {0, 0, 0.022f}, {0.78f, 0.58f, 0.01f}), fabricMat(vec3(1.0f)), tex);    // tela com a imagem
+    };
+    quadro({-0.7f, 1.7f, -3.98f}, T.paint1);
+    quadro({3.0f, 1.8f, -3.98f}, T.paint2);
+
+    // --- ventilador de teto (haste, motor e 4 pas que giram em torno de Y)
+    draw(M.cyl, part(I, {0.0f, 2.88f, 0.5f}, {0.04f, 0.24f, 0.04f}), M_METAL, T.metal);
+    draw(M.cyl, part(I, {0.0f, 2.74f, 0.5f}, {0.24f, 0.1f, 0.24f}), M_METAL, T.metal);
+    mat4 F = glm::rotate(glm::translate(I, vec3(0.0f, 2.7f, 0.5f)), glm::radians(G.fanAngle), vec3(0, 1, 0));
+    for (int k = 0; k < 4; k++) {
+        mat4 Bl = glm::rotate(F, glm::radians(90.0f * k), vec3(0, 1, 0));
+        draw(M.cube, part(Bl, {0.42f, 0, 0}, {0.55f, 0.015f, 0.12f}), M_WOOD, T.wood);
+    }
 
     // --- itens: moedas giratorias (rotacao animada) e flutuantes
     for (int i = 0; i < (int)G.items.size(); i++) {
@@ -694,10 +763,17 @@ int main() {
             }
         }
 
+        // ---- ventilador de teto
+        if (G.fanOn) G.fanAngle = std::fmod(G.fanAngle + 540.0f * (float)dt, 360.0f);
+
         // ---- interacao
         Target tgt = (G.ended || !G.started) ? Target() : pick(now);
-        if (pressE && tgt.kind >= 0) interact(tgt);
+        if ((tgt.kind == 0 || tgt.kind == 4) && pressE) interact(tgt);   // E pega moeda e chave
+        if ((tgt.kind == 1 || tgt.kind == 2) && pressF) interact(tgt);   // F abre e fecha
+        if ((tgt.kind == 3 || tgt.kind == 5) && pressG) interact(tgt);   // G liga e desliga
         pressE = false;
+        pressF = false;
+        pressG = false;
 
         // ---- animacoes (interpolacao suave ate o alvo)
         auto approach = [&](float& v, float target, float speed) {
@@ -737,4 +813,5 @@ int main() {
     }
     glfwTerminate();
     return 0;
+
 }
