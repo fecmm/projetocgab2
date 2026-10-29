@@ -53,6 +53,7 @@ uniform vec3 uAmbient;
 uniform vec3 uSunDir;   uniform vec3 uSunColor;     // luz direcional
 uniform vec3 uLampPos;  uniform vec3 uLampColor;    // luz pontual (abajur)
 uniform int uLampOn;
+uniform float uAlpha;
 
 vec3 blinn(vec3 L, vec3 lightColor, vec3 N, vec3 V, vec3 tex){
     float d = max(dot(N, L), 0.0);
@@ -72,7 +73,7 @@ void main(){
         float att = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
         c += blinn(Lv / dist, uLampColor, N, V, tex) * att;
     }
-    FragColor = vec4(c, 1.0);
+    FragColor = vec4(c, uAlpha);
 })";
 
 static GLuint gProg = 0;
@@ -277,7 +278,7 @@ static const Material M_CEIL   = mat(vec3(0.6f), vec3(0.9f), vec3(0.0f), 2);
 static const Material M_METAL  = mat(vec3(0.3f), vec3(0.6f), vec3(0.95f), 96);       // metal brilhante
 static const Material M_GOLD   = mat(vec3(0.4f), vec3(1.0f, 0.82f, 0.2f), vec3(0.9f, 0.8f, 0.4f), 64, vec3(0.30f, 0.22f, 0.02f));
 static Material fabricMat(vec3 tint) { return mat(vec3(0.5f), tint, vec3(0.03f), 4); }
-static const Material M_GLASS  = mat(vec3(0.5f), vec3(0.55f, 0.75f, 0.95f), vec3(0.9f), 128, vec3(0.20f, 0.30f, 0.45f));   // vidro azulado
+static const Material M_GLASS  = mat(vec3(0.5f), vec3(0.55f, 0.75f, 0.95f), vec3(0.9f), 128, vec3(0.05f, 0.08f, 0.12f));
 
 static void draw(const Mesh& m, const mat4& model, const Material& mt, GLuint tex, vec2 uv = vec2(1.0f)) {
     glUniformMatrix4fv(U("uModel"), 1, GL_FALSE, glm::value_ptr(model));
@@ -295,6 +296,76 @@ static void draw(const Mesh& m, const mat4& model, const Material& mt, GLuint te
 // Hierarquia: parent * T(pos) * S(size)
 static mat4 part(const mat4& parent, vec3 pos, vec3 size) {
     return glm::scale(glm::translate(parent, pos), size);
+}
+
+// ============================================================ skybox (ceu noturno gerado em codigo)
+static const char* SKY_VS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+uniform mat4 uView, uProj;
+out vec3 vDir;
+void main(){
+    vDir = aPos;                                 // a posicao do cubo serve de direcao
+    mat4 v = mat4(mat3(uView));                  // tira a translacao: o ceu acompanha a camera
+    gl_Position = uProj * v * vec4(aPos, 1.0);
+})";
+static const char* SKY_FS = R"(#version 330 core
+in vec3 vDir;
+out vec4 FragColor;
+uniform samplerCube uSky;
+void main(){ FragColor = vec4(texture(uSky, vDir).rgb, 1.0); })";
+
+static GLuint gSkyProg = 0, gSkyTex = 0;
+static const vec3 MOON_DIR = glm::normalize(vec3(1.0f, 0.45f, 0.1f));   // direcao da lua no ceu
+
+static GLuint buildSkyProgram() {
+    GLuint v = compileShader(GL_VERTEX_SHADER, SKY_VS), f = compileShader(GL_FRAGMENT_SHADER, SKY_FS);
+    GLuint p = glCreateProgram();
+    glAttachShader(p, v); glAttachShader(p, f); glLinkProgram(p);
+    GLint ok = 0; glGetProgramiv(p, GL_LINK_STATUS, &ok);
+    if (!ok) { char log[1024]; glGetProgramInfoLog(p, 1024, nullptr, log); std::fprintf(stderr, "Link sky: %s\n", log); }
+    glDeleteShader(v); glDeleteShader(f);
+    return p;
+}
+
+// Gera as 6 faces do cubemap: gradiente de noite, estrelas e uma lua
+static GLuint makeSkybox() {
+    const int S = 256;
+    GLuint t; glGenTextures(1, &t); glBindTexture(GL_TEXTURE_CUBE_MAP, t);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    for (int face = 0; face < 6; face++) {
+        std::vector<unsigned char> d((size_t)S * S * 3);
+        for (int y = 0; y < S; y++)
+            for (int x = 0; x < S; x++) {
+                float a = 2.0f * (x + 0.5f) / S - 1.0f, b = 2.0f * (y + 0.5f) / S - 1.0f;
+                vec3 dir;
+                switch (face) {   // convencao do OpenGL para cada face do cubemap
+                    case 0:  dir = vec3( 1, -b, -a); break;   // +X
+                    case 1:  dir = vec3(-1, -b,  a); break;   // -X
+                    case 2:  dir = vec3( a,  1,  b); break;   // +Y
+                    case 3:  dir = vec3( a, -1, -b); break;   // -Y
+                    case 4:  dir = vec3( a, -b,  1); break;   // +Z
+                    default: dir = vec3(-a, -b, -1); break;   // -Z
+                }
+                dir = glm::normalize(dir);
+                float up = glm::clamp(dir.y, 0.0f, 1.0f);
+                vec3 c = glm::mix(vec3(0.10f, 0.13f, 0.26f), vec3(0.01f, 0.02f, 0.07f), std::sqrt(up));   // horizonte -> zenite
+                if (dir.y < 0.0f) c = vec3(0.02f, 0.03f, 0.05f);                                          // chao distante
+                if (hash2(face * S + x, y) > 0.996f && dir.y > 0.0f)                                       // estrelas
+                    c += vec3(0.5f + 0.5f * hash2(x, y + 7));
+                float cs = glm::dot(dir, MOON_DIR);
+                c += vec3(1.0f, 1.0f, 0.9f) * (0.35f * std::pow(std::max(cs, 0.0f), 200.0f) + 0.10f * std::pow(std::max(cs, 0.0f), 25.0f));  // brilho
+                if (cs > 0.9982f) c = vec3(0.95f, 0.95f, 0.85f);                                           // disco da lua
+                c = glm::clamp(c, 0.0f, 1.0f);
+                for (int k = 0; k < 3; k++) d[((size_t)y * S + x) * 3 + k] = (unsigned char)(c[k] * 255.0f);
+            }
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGB, S, S, 0, GL_RGB, GL_UNSIGNED_BYTE, d.data());
+    }
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+    return t;
 }
 
 // ============================================================ estado do jogo e camera
@@ -477,6 +548,7 @@ static void hudInit() {
     glBindVertexArray(0);
 }
 
+
 static void hudRect(float x, float y, float w, float h, vec4 c) {
     const float q[6][2] = {{x, y}, {x + w, y}, {x + w, y + h}, {x, y}, {x + w, y + h}, {x, y + h}};
     for (const auto& p : q) gHudVerts.insert(gHudVerts.end(), {p[0], p[1], c.r, c.g, c.b, c.a});
@@ -594,7 +666,13 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     draw(M.cube, part(I, {0, 3.05f, 0}, {8.2f, 0.1f, 8.2f}), M_CEIL, T.fabric, {4, 4});
     draw(M.cube, part(I, {0, 1.5f, -4.05f}, {8.2f, 3, 0.1f}), M_WALL, T.wall, {8, 3});
     draw(M.cube, part(I, {0, 1.5f,  4.05f}, {8.2f, 3, 0.1f}), M_WALL, T.wall, {8, 3});
-    draw(M.cube, part(I, { 4.05f, 1.5f, 0}, {0.1f, 3, 8.2f}), M_WALL, T.wall, {8, 3});
+
+    // parede leste em 4 pecas, deixando uma abertura para a janela
+    draw(M.cube, part(I, {4.05f, 1.5f, -1.475f}, {0.1f, 3.0f, 5.25f}), M_WALL, T.wall, {5.25f, 3});   // ate a janela
+    draw(M.cube, part(I, {4.05f, 1.5f,  3.275f}, {0.1f, 3.0f, 1.65f}), M_WALL, T.wall, {1.65f, 3});   // depois da janela
+    draw(M.cube, part(I, {4.05f, 0.5f,  1.8f},   {0.1f, 1.0f, 1.3f}),  M_WALL, T.wall, {1.3f, 1});    // abaixo da janela
+    draw(M.cube, part(I, {4.05f, 2.6f,  1.8f},   {0.1f, 0.8f, 1.3f}),  M_WALL, T.wall, {1.3f, 0.8f}); // acima da janela
+
     draw(M.cube, part(I, {-4.05f, 1.5f, 0}, {0.1f, 3, 8.2f}), M_WALL, T.wall, {8, 3});
 
     // --- tapete
@@ -670,8 +748,7 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     draw(M.cube, part(W, {0, 0, 0}, {0.05f, 1.2f, 0.04f}), M_WOOD, T.wood);            // travessa vertical
     draw(M.cube, part(W, {0, 0, 0}, {0.05f, 0.04f, 1.3f}), M_WOOD, T.wood);            // travessa horizontal
     draw(M.cube, part(W, {-0.04f, -0.64f, 0}, {0.14f, 0.04f, 1.45f}), M_WOOD, T.wood); // parapeito
-    draw(M.cube, part(W, {0.02f, 0, 0}, {0.02f, 1.14f, 1.24f}), M_GLASS, T.white);     // vidro
-
+    
     // --- quadros na parede norte (moldura + tela com ceu, chao e sol)
     auto quadro = [&](vec3 pos, GLuint tex) {
         mat4 Q = glm::translate(I, pos);
@@ -698,6 +775,15 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
         m = glm::rotate(m, glm::radians(90.0f), vec3(1, 0, 0));
         draw(M.cyl, glm::scale(m, vec3(0.2f, 0.03f, 0.2f)), M_GOLD, T.metal);
     }
+
+    // --- vidro da janela: por ultimo, com transparencia (blending) e sem escrever profundidade
+    glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glUniform1f(U("uAlpha"), 0.25f);
+    draw(M.cube, part(W, {0.02f, 0, 0}, {0.02f, 1.14f, 1.24f}), M_GLASS, T.white);
+    glUniform1f(U("uAlpha"), 1.0f);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
 }
 
 // ============================================================ main
@@ -721,6 +807,8 @@ int main() {
     glEnable(GL_DEPTH_TEST);
     glEnable(GL_CULL_FACE);
     gProg = buildProgram();
+    gSkyProg = buildSkyProgram();
+    gSkyTex = makeSkybox();
     Meshes M{makeCube(), makeCylinder(), makeSphere()};
     Textures T = makeTextures();
     hudInit();
@@ -804,6 +892,18 @@ int main() {
         glUniform3fv(U("uLampPos"), 1, glm::value_ptr(LAMP_LIGHT_POS));
         glUniform3f(U("uLampColor"), 2.0f, 1.7f, 1.2f);
         glUniform1i(U("uLampOn"), G.lampOn ? 1 : 0);
+        glUniform1f(U("uAlpha"), 1.0f);
+
+        // ---- skybox: desenhado primeiro, sem profundidade (so aparece pela janela)
+        glDisable(GL_DEPTH_TEST); glDisable(GL_CULL_FACE);
+        glUseProgram(gSkyProg);
+        glUniformMatrix4fv(glGetUniformLocation(gSkyProg, "uView"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(gSkyProg, "uProj"), 1, GL_FALSE, glm::value_ptr(proj));
+        glBindTexture(GL_TEXTURE_CUBE_MAP, gSkyTex);
+        glBindVertexArray(M.cube.vao);
+        glDrawElements(GL_TRIANGLES, M.cube.count, GL_UNSIGNED_INT, 0);
+        glEnable(GL_DEPTH_TEST); glEnable(GL_CULL_FACE);
+        glUseProgram(gProg);
         drawScene(M, T, now);
 
         // ---- HUD 2D por cima da cena
