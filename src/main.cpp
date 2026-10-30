@@ -440,6 +440,8 @@ struct Item { vec3 pos; int req; bool got; };   // req: 0 livre, 1 armario abert
 struct Game {
     bool lampOn = true, flashOn = false, started = false, ended = false, wireframe = false;
     float closet = 0, closetT = 0, drawer = 0, drawerT = 0;
+    float nightD = 0, nightDT = 0;   // gaveta do criado-mudo
+    float chest = 0, chestT = 0;     // tampa do bau
     std::vector<Item> items;
     double start = 0, endTime = 0;
     std::string result;
@@ -505,6 +507,10 @@ static const AABB COLLIDERS[] = {
     { 2.15f, -3.15f,  3.85f, -0.85f},  // cama
     { 0.30f, -4.00f,  1.70f, -3.40f},  // armario
     {-3.95f,  0.40f, -3.65f,  1.60f},  // estante
+    { 1.70f, -3.20f,  2.20f, -2.70f},  // criado-mudo
+    { 3.35f,  1.30f,  3.95f,  2.30f},  // bau
+    { 3.10f,  3.10f,  3.50f,  3.50f},  // vaso
+    {-3.75f, -1.25f, -3.25f, -0.75f},  // cesto
 };
 static bool blocked(vec3 p) {
     const float R = 0.3f, L = 4.0f - R;
@@ -518,11 +524,14 @@ static bool blocked(vec3 p) {
 static bool available(const Item& it) {
     if (it.req == 1) return G.closet > 0.7f;
     if (it.req == 2) return G.drawer > 0.2f;
+    if (it.req == 4) return G.nightD > 0.2f;       // moeda no criado-mudo
+    if (it.req == 5) return G.chest > 0.6f;        // moeda no bau
     return true;
 }
 static vec3 itemPos(int i, double t) {
     vec3 p = G.items[i].pos;
-    if (i == 1) p.z += G.drawer;            // acompanha a gaveta
+    if (i == 1) p.z += G.drawer;  
+    if (i == 6) p.z += G.nightD;              // acompanha a gaveta
     p.y += 0.02f * (float)std::sin(t * 2.0 + i);
     return p;
 }
@@ -541,6 +550,8 @@ static Target pick(double t) {
     consider(vec3(-2.05f, 0.64f, -2.9f + G.drawer), 2, 0, G.drawerT > 0 ? "[F] Fechar gaveta" : "[F] Abrir gaveta");
     consider(vec3(-3.1f, 1.0f, -3.2f), 3, 0, G.lampOn ? "[G] Apagar abajur" : "[G] Acender abajur");
     consider(vec3(0.0f, 2.7f, 0.5f), 5, 0, G.fanOn ? "[G] Desligar ventilador" : "[G] Ligar ventilador");
+    consider(vec3(1.95f, 0.4f, -2.7f + G.nightD), 7, 0, G.nightDT > 0 ? "[F] Fechar gaveta" : "[F] Abrir gaveta");
+    consider(vec3(3.5f, 0.45f, 1.8f), 8, 0, G.chestT > 0 ? "[F] Fechar bau" : "[F] Abrir bau");
     return best;
 }
 static void interact(const Target& t) {
@@ -550,6 +561,8 @@ static void interact(const Target& t) {
         case 2: G.drawerT = G.drawerT > 0 ? 0.0f : 0.4f; break;
         case 3: G.lampOn = !G.lampOn; break;
         case 5: G.fanOn = !G.fanOn; break;
+        case 7: G.nightDT = G.nightDT > 0 ? 0.0f : 0.3f; break;
+        case 8: G.chestT = G.chestT > 0 ? 0.0f : 1.0f; break;
     }
 }
 
@@ -774,7 +787,7 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     draw(M.cube, part(H, {0, 0.73f, 0.23f}, {0.5f, 0.5f, 0.05f}), M_WOOD, T.wood);
 
     // --- cama (pernas, estrado, colchao, travesseiro, cabeceira)
-    mat4 B = glm::translate(I, vec3(3.0f, 0, -2.0f));
+    mat4 B = glm::translate(I, vec3(3.0f, 0, -2.50f));
     for (int sx = -1; sx <= 1; sx += 2)
         for (int sz = -1; sz <= 1; sz += 2)
             draw(M.cube, part(B, {0.7f * sx, 0.225f, 1.0f * sz}, {0.08f, 0.45f, 0.08f}), M_WOOD, T.wood);
@@ -784,7 +797,7 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     draw(M.cube, part(B, {0, 0.9f, -1.12f}, {1.6f, 0.9f, 0.06f}), M_WOOD, T.wood);
 
     // --- armario (corpo + porta articulada por dobradica: rotacao em torno de Y)
-    mat4 C = glm::translate(I, vec3(1.0f, 0, -3.7f));
+    mat4 C = glm::translate(I, vec3(0.85f, 0, -3.7f));
     draw(M.cube, part(C, {0, 1.1f, -0.28f}, {1.4f, 2.2f, 0.04f}), M_WOOD, T.wood);
     draw(M.cube, part(C, {-0.68f, 1.1f, 0}, {0.04f, 2.2f, 0.6f}), M_WOOD, T.wood);
     draw(M.cube, part(C, { 0.68f, 1.1f, 0}, {0.04f, 2.2f, 0.6f}), M_WOOD, T.wood);
@@ -834,6 +847,59 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
         mat4 Bl = glm::rotate(F, glm::radians(90.0f * k), vec3(0, 1, 0));
         draw(M.cube, part(Bl, {0.42f, 0, 0}, {0.55f, 0.015f, 0.12f}), M_WOOD, T.wood);
     }
+
+    // --- criado-mudo ao lado da cama (corpo aberto na frente + gaveta que desliza)
+    mat4 K = glm::translate(I, vec3(1.90f, 0, -3.45f));
+    draw(M.cube, part(K, {0, 0.60f, 0}, {0.5f, 0.04f, 0.5f}), M_WOOD, T.wood);              // tampo
+    draw(M.cube, part(K, {-0.23f, 0.29f, 0}, {0.04f, 0.58f, 0.46f}), M_WOOD, T.wood);       // lateral
+    draw(M.cube, part(K, { 0.23f, 0.29f, 0}, {0.04f, 0.58f, 0.46f}), M_WOOD, T.wood);       // lateral
+    draw(M.cube, part(K, {0, 0.29f, -0.22f}, {0.42f, 0.58f, 0.04f}), M_WOOD, T.wood);       // fundo
+    draw(M.cube, part(K, {0, 0.07f, 0}, {0.42f, 0.04f, 0.46f}), M_WOOD, T.wood);            // base
+    for (int sx = -1; sx <= 1; sx += 2)
+        for (int sz = -1; sz <= 1; sz += 2)
+            draw(M.cube, part(K, {0.2f * sx, 0.025f, 0.2f * sz}, {0.05f, 0.05f, 0.05f}), M_WOOD, T.wood);   // pes
+    float no = G.nightD;                                                                    // translacao animada
+    draw(M.cube, part(K, {0, 0.22f, no}, {0.38f, 0.02f, 0.42f}), M_WOOD, T.wood);           // gaveta: fundo
+    draw(M.cube, part(K, {-0.19f, 0.28f, no}, {0.02f, 0.12f, 0.42f}), M_WOOD, T.wood);
+    draw(M.cube, part(K, { 0.19f, 0.28f, no}, {0.02f, 0.12f, 0.42f}), M_WOOD, T.wood);
+    draw(M.cube, part(K, {0, 0.28f, -0.2f + no}, {0.38f, 0.12f, 0.02f}), M_WOOD, T.wood);
+    draw(M.cube, part(K, {0, 0.30f, 0.235f + no}, {0.42f, 0.18f, 0.03f}), M_WOOD, T.wood);  // frente
+    draw(M.sph,  part(K, {0, 0.30f, 0.26f + no}, {0.04f, 0.04f, 0.04f}), M_METAL, T.metal); // puxador
+
+    // --- bau sob a janela (corpo aberto em cima + tampa articulada: rotacao em torno do eixo Z)
+    mat4 Cb = glm::translate(I, vec3(3.65f, 0, 1.8f));
+    draw(M.cube, part(Cb, {0, 0.03f, 0}, {0.6f, 0.06f, 1.0f}), M_WOOD, T.wood);             // fundo
+    draw(M.cube, part(Cb, {-0.27f, 0.2f, 0}, {0.06f, 0.4f, 1.0f}), M_WOOD, T.wood);         // frente
+    draw(M.cube, part(Cb, { 0.27f, 0.2f, 0}, {0.06f, 0.4f, 1.0f}), M_WOOD, T.wood);         // lado da parede
+    draw(M.cube, part(Cb, {0, 0.2f, -0.47f}, {0.54f, 0.4f, 0.06f}), M_WOOD, T.wood);        // lateral
+    draw(M.cube, part(Cb, {0, 0.2f,  0.47f}, {0.54f, 0.4f, 0.06f}), M_WOOD, T.wood);        // lateral
+    draw(M.cube, part(Cb, {-0.31f, 0.34f, 0}, {0.03f, 0.08f, 0.12f}), M_METAL, T.metal);    // fecho
+    mat4 Lid = glm::rotate(glm::translate(Cb, vec3(0.3f, 0.4f, 0)), -G.chest * glm::radians(75.0f), vec3(0, 0, 1));
+    draw(M.cube, part(Lid, {-0.3f, 0.03f, 0}, {0.6f, 0.06f, 1.0f}), M_WOOD, T.wood);        // tampa
+    draw(M.cube, part(Lid, {-0.3f, 0.065f, -0.3f}, {0.62f, 0.01f, 0.06f}), M_METAL, T.metal);   // cintas de metal
+    draw(M.cube, part(Lid, {-0.3f, 0.065f,  0.3f}, {0.62f, 0.01f, 0.06f}), M_METAL, T.metal);
+
+    // --- vaso com planta no canto sudeste (a moeda do canto fica parcialmente atras dele)
+    mat4 Vs = glm::translate(I, vec3(3.3f, 0, 3.3f));
+    draw(M.cyl, part(Vs, {0, 0.17f, 0}, {0.3f, 0.34f, 0.3f}), fabricMat({0.75f, 0.4f, 0.25f}), T.fabric);      // vaso
+    draw(M.cyl, part(Vs, {0, 0.36f, 0}, {0.4f, 0.05f, 0.4f}), fabricMat({0.75f, 0.4f, 0.25f}), T.fabric);     // borda
+    draw(M.cyl, part(Vs, {0, 0.385f, 0}, {0.34f, 0.02f, 0.34f}), fabricMat({0.25f, 0.15f, 0.1f}), T.fabric);  // terra
+    draw(M.cyl, part(Vs, {0, 0.58f, 0}, {0.03f, 0.4f, 0.03f}), fabricMat({0.2f, 0.5f, 0.2f}), T.fabric);      // caule
+    for (int k = 0; k < 6; k++) {
+        mat4 lf = glm::rotate(Vs, -glm::radians(60.0f * k), vec3(0, 1, 0));                                   // folhas em circulo
+        draw(M.sph, part(lf, {0.13f, 0.62f + 0.04f * k, 0}, {0.2f, 0.07f, 0.12f}), fabricMat({0.2f, 0.6f, 0.25f}), T.fabric);
+    }
+
+    // --- cesto de roupa junto a parede oeste (ripas em circulo, fundo e roupa)
+    mat4 Ct = glm::translate(I, vec3(-3.5f, 0, -1.0f));
+    draw(M.cyl, part(Ct, {0, 0.02f, 0}, {0.5f, 0.03f, 0.5f}), fabricMat({0.8f, 0.65f, 0.4f}), T.fabric);
+    for (int k = 0; k < 16; k++) {
+        mat4 sl = glm::rotate(Ct, glm::radians(22.5f * k), vec3(0, 1, 0));
+        draw(M.cube, part(sl, {0.25f, 0.24f, 0}, {0.03f, 0.44f, 0.1f}), fabricMat({0.8f, 0.65f, 0.4f}), T.fabric);      // ripa
+        draw(M.cube, part(sl, {0.255f, 0.1f, 0}, {0.04f, 0.03f, 0.11f}), fabricMat({0.6f, 0.45f, 0.25f}), T.fabric);    // cinta baixa
+        draw(M.cube, part(sl, {0.255f, 0.42f, 0}, {0.04f, 0.03f, 0.11f}), fabricMat({0.6f, 0.45f, 0.25f}), T.fabric);   // cinta alta
+    }
+    draw(M.sph, part(Ct, {0, 0.36f, 0}, {0.34f, 0.2f, 0.34f}), fabricMat({0.55f, 0.65f, 1.0f}), T.fabric, {2, 2});      // roupa
 
     // --- itens: moedas giratorias (rotacao animada) e flutuantes
     for (int i = 0; i < (int)G.items.size(); i++) {
@@ -892,6 +958,8 @@ int main() {
         {{-3.8f, 1.28f, 0.8f}, 0, false},   // na estante
         {{3.6f, 0.1f, 3.6f}, 0, false},     // no canto escuro
         {{1.0f, 2.32f, -3.7f}, 0, false},   // em cima do armario
+        {{1.95f, 0.36f, -2.95f}, 4, false}, // dentro do criado-mudo
+        {{3.65f, 0.22f, 1.8f}, 5, false},   // dentro do bau
     };
     G.start = glfwGetTime();
     double last = G.start;
@@ -929,7 +997,7 @@ int main() {
         // ---- interacao
         Target tgt = (G.ended || !G.started) ? Target() : pick(now);
         if ((tgt.kind == 0 || tgt.kind == 4) && pressE) interact(tgt);   // E pega moeda e chave
-        if ((tgt.kind == 1 || tgt.kind == 2) && pressF) interact(tgt);   // F abre e fecha
+        if ((tgt.kind == 1 || tgt.kind == 2 || tgt.kind == 7 || tgt.kind == 8) && pressF) interact(tgt);  // F abre e fecha// F abre e fecha
         if ((tgt.kind == 3 || tgt.kind == 5) && pressG) interact(tgt);   // G liga e desliga
         pressE = false;
         pressF = false;
@@ -942,6 +1010,8 @@ int main() {
         };
         approach(G.closet, G.closetT, 2.5f);
         approach(G.drawer, G.drawerT, 0.8f);
+        approach(G.nightD, G.nightDT, 0.8f);
+        approach(G.chest, G.chestT, 1.5f);
 
         // ---- render
         int w, h; glfwGetFramebufferSize(win, &w, &h);
