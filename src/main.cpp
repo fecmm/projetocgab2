@@ -58,6 +58,7 @@ uniform int uLampOn;
 uniform float uAlpha;
 
 uniform sampler2D uShadowMap;                                   // mapa de sombra da lua
+uniform int uFlashOn; uniform vec3 uFlashPos; uniform vec3 uFlashDir;   // lanterna (spot light)
 
 // 1 = iluminado, 0 = na sombra 
 float shadowFactor(vec3 N, vec3 L){
@@ -94,6 +95,17 @@ void main(){
         float att = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
         c += blinn(Lv / dist, uLampColor, N, V, tex) * att;
     }
+    
+    if (uFlashOn == 1) {                                          // lanterna: cone com borda suave
+        vec3 Lf = uFlashPos - vPos;
+        float dist = length(Lf);
+        vec3 Ld = Lf / dist;
+        float theta = dot(Ld, normalize(-uFlashDir));
+        float k = clamp((theta - 0.85) / (0.93 - 0.85), 0.0, 1.0);
+        float att = 1.0 / (1.0 + 0.09 * dist + 0.032 * dist * dist);
+        c += blinn(Ld, vec3(1.6, 1.6, 1.4), N, V, tex) * att * k;
+    }
+    
     FragColor = vec4(c, uAlpha);
 })";
 
@@ -426,7 +438,7 @@ static void initShadow() {
 // ============================================================ estado do jogo e camera
 struct Item { vec3 pos; int req; bool got; };   // req: 0 livre, 1 armario aberto, 2 gaveta aberta
 struct Game {
-    bool lampOn = true, started = false, ended = false, wireframe = false;
+    bool lampOn = true, flashOn = false, started = false, ended = false, wireframe = false;
     float closet = 0, closetT = 0, drawer = 0, drawerT = 0;
     std::vector<Item> items;
     double start = 0, endTime = 0;
@@ -474,6 +486,7 @@ static void keyCb(GLFWwindow* w, int key, int, int action, int) {
     if (key == GLFW_KEY_E) pressE = true;
     if (key == GLFW_KEY_F) pressF = true;
     if (key == GLFW_KEY_G) pressG = true;
+    if (key == GLFW_KEY_L) G.flashOn = !G.flashOn;
     if (key == GLFW_KEY_F1) G.wireframe = !G.wireframe;
 }
 static void mouseCb(GLFWwindow*, double x, double y) {
@@ -666,7 +679,7 @@ static void drawHud(int w, int h, double now, const Target& tgt) {
         y += 3.0f * line;
         const char* cmds[] = {
             "W A S D: ANDAR", "SHIFT: CORRER", "MOUSE: OLHAR", "E: PEGAR MOEDA",
-            "F: ABRIR / FECHAR", "G: LIGAR / DESLIGAR", "F1: WIREFRAME", "ESC: DESISTIR"
+            "F: ABRIR / FECHAR", "G: LIGAR / DESLIGAR", "L: LANTERNA", "F1: WIREFRAME", "ESC: DESISTIR"
         };
         for (const char* c : cmds) { hudTextCentered(cx, y, sc, c, white); y += 1.8f * line; }
         y += 1.5f * line;
@@ -966,6 +979,9 @@ int main() {
         glUniformMatrix4fv(U("uLightSpace"), 1, GL_FALSE, glm::value_ptr(lightSpace));
         glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gShadowTex); glActiveTexture(GL_TEXTURE0);
         glUniform1i(U("uShadowMap"), 1);
+        glUniform1i(U("uFlashOn"), G.flashOn ? 1 : 0);
+        glUniform3fv(U("uFlashPos"), 1, glm::value_ptr(camPos));
+        glUniform3fv(U("uFlashDir"), 1, glm::value_ptr(camFront()));
         glUniform3fv(U("uLampPos"), 1, glm::value_ptr(LAMP_LIGHT_POS));
         glUniform3f(U("uLampColor"), 2.0f, 1.7f, 1.2f);
         glUniform1i(U("uLampOn"), G.lampOn ? 1 : 0);
