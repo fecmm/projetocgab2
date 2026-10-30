@@ -36,13 +36,13 @@ O contador de itens, o tempo e a dica de interação aparecem no título da jane
 
 ## Requisitos
 
-- Modelagem própria: mesa, cadeira, cama, armário, estante, abajur, tapete, moedas, janela, quadros, ventilador, mesa de cabeçeira, vaso de planta, cesta de roupas e baú |
-- Transformações: T·R·S com hierarquia (porta do armário em torno da dobradiça, gaveta deslizando, moedas girando e flutuando, estante rotacionada) |
-- Navegação: câmera FPS com colisão simples (paredes e móveis) |
-- Interações: armário, gaveta, abajur e coleta de itens, ventilador |
-- Iluminação: Blinn-Phong com luz direcional fraca + luz pontual (abajur) e materiais distintos por objeto + , sombras, lanterna |
-- Texturas: madeira, piso, tijolo, tecido e metal geradas proceduralmente |
-- Jogo: 8 itens, 3 min, partida única; se o tempo acabar ou o jogador desistir, mostra o resultado parcial (ex.: 4/6) |
+- Modelagem própria: mesa, cadeira, cama, armário, estante, abajur, tapete, moedas, janela, quadros, ventilador, mesa de cabeçeira, vaso de planta, cesta de roupas e baú 
+- Transformações: T·R·S com hierarquia (porta do armário em torno da dobradiça, gaveta deslizando, moedas girando e flutuando, estante rotacionada) 
+- Navegação: câmera FPS com colisão simples (paredes e móveis) 
+- Interações: armário, gaveta, abajur e coleta de itens, ventilador 
+- Iluminação: Blinn-Phong com luz direcional fraca + luz pontual (abajur) e materiais distintos por objeto + , sombras, lanterna 
+- Texturas: madeira, piso, tijolo, tecido e metal geradas proceduralmente 
+- Jogo: 8 itens, 3 min, partida única; se o tempo acabar ou o jogador desistir, mostra o resultado parcial (ex.: 4/6) 
 
 ## Estrutura
 
