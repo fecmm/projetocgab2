@@ -1,4 +1,4 @@
-# Cena 3D Interativa – Ache os objetos escondidos
+# Cena 3D Interativa – Ache as moedas escondidos
 
 Minijogo de partida única em OpenGL 3.3 Core (C++17, GLFW, GLAD, GLM). O jogador explora um quarto e deve achar
 as 6 moedas douradas escondidas antes de 3 minutos. Sem motores e sem modelos importados: toda a geometria e as
@@ -25,33 +25,35 @@ cmake --build build --config Release
 | W / A / S / D | Andar |
 | Shift | Correr |
 | Mouse | Olhar |
-| E | Interagir com o alvo (mira no centro da tela): pegar moeda, abrir/fechar armário, abrir/fechar gaveta, acender/apagar abajur |
+| ENTER | Começar o jogo (tela inicial) |
+| E | Interagir com o alvo (mira no centro da tela): pegar moeda |
+| F | Abrir/fechar armário e gaveta |
+| F | Abrir/fechar armário e gaveta |
 | F1 | Alternar wireframe |
 | ESC | Desistir (mostra o resultado parcial); ESC de novo fecha |
 
 O contador de itens, o tempo e a dica de interação aparecem no título da janela.
 
-## O que já está pronto
+## Requisitos
 
-- Modelagem própria: cubo, cilindro e esfera com normais e UVs; mesa (com gaveta), cadeira, cama, armário, estante, abajur, tapete, moedas e sala
-- Transformações: T·R·S com hierarquia (porta do armário em torno da dobradiça, gaveta deslizando, moedas girando e flutuando, estante rotacionada)
-- Navegação: câmera FPS com colisão simples (paredes e móveis)
-- Interações: armário, gaveta, abajur e coleta de itens
-- Iluminação: Blinn-Phong com luz direcional fraca + luz pontual (abajur) e materiais distintos por objeto
-- Texturas: madeira, piso, tijolo, tecido e metal geradas proceduralmente
-- Jogo: 6 itens, 3 min, partida única; se o tempo acabar ou o jogador desistir, mostra o resultado parcial (ex.: 4/6)
-
-## Falta fazer (ideias)
-
-- HUD com texto/quads 2D em vez do título da janela
-- Mais objetos e detalhes (ventilador de teto, janela, quadros), mais texturas (arquivos com stb_image)
-- Sombras (shadow mapping), skybox, normal mapping, transparência no vidro
-- Relatório (1–3 páginas) e vídeo de 2–4 min
+- Modelagem própria: mesa, cadeira, cama, armário, estante, abajur, tapete, moedas, janela, quadros, ventilador, mesa de cabeçeira, vaso de planta, cesta de roupas e baú |
+- Transformações: T·R·S com hierarquia (porta do armário em torno da dobradiça, gaveta deslizando, moedas girando e flutuando, estante rotacionada) |
+- Navegação: câmera FPS com colisão simples (paredes e móveis) |
+- Interações: armário, gaveta, abajur e coleta de itens, ventilador |
+- Iluminação: Blinn-Phong com luz direcional fraca + luz pontual (abajur) e materiais distintos por objeto + , sombras, lanterna |
+- Texturas: madeira, piso, tijolo, tecido e metal geradas proceduralmente |
+- Jogo: 8 itens, 3 min, partida única; se o tempo acabar ou o jogador desistir, mostra o resultado parcial (ex.: 4/6) |
 
 ## Estrutura
 
 ```
 CMakeLists.txt
 src/main.cpp
+assets/            texturas em PNG (geradas por tools/gerar_texturas.py)
+tools/             script que gera as texturas
 external/glad/    (você gera, ver acima)
+external/stb/      stb_image.h
 ```
+
+## Bibliotecas: 
+GLFW, GLAD, GLM, stb_image.
