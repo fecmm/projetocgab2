@@ -33,17 +33,19 @@ layout(location=1) in vec3 aNormal;
 layout(location=2) in vec2 aUV;
 uniform mat4 uModel, uView, uProj;
 uniform vec2 uUVScale;
-out vec3 vPos; out vec3 vNormal; out vec2 vUV;
+uniform mat4 uLightSpace;  
+out vec3 vPos; out vec3 vNormal; out vec2 vUV; out vec4 vLightPos;
 void main(){
     vec4 w = uModel * vec4(aPos, 1.0);
     vPos = w.xyz;
     vNormal = mat3(transpose(inverse(uModel))) * aNormal;
     vUV = aUV * uUVScale;
     gl_Position = uProj * uView * w;
+    vLightPos = uLightSpace * w;
 })";
 
 static const char* FS = R"(#version 330 core
-in vec3 vPos; in vec3 vNormal; in vec2 vUV;
+in vec3 vPos; in vec3 vNormal; in vec2 vUV; in vec4 vLightPos;
 out vec4 FragColor;
 struct Material { vec3 ambient; vec3 diffuse; vec3 specular; float shininess; vec3 emissive; };
 uniform Material uMat;
@@ -54,6 +56,24 @@ uniform vec3 uSunDir;   uniform vec3 uSunColor;     // luz direcional
 uniform vec3 uLampPos;  uniform vec3 uLampColor;    // luz pontual (abajur)
 uniform int uLampOn;
 uniform float uAlpha;
+
+uniform sampler2D uShadowMap;                                   // mapa de sombra da lua
+
+// 1 = iluminado, 0 = na sombra 
+float shadowFactor(vec3 N, vec3 L){
+    vec3 p = vLightPos.xyz / vLightPos.w;
+    p = p * 0.5 + 0.5;
+    if (p.z > 1.0 || p.x < 0.0 || p.x > 1.0 || p.y < 0.0 || p.y > 1.0) return 1.0;
+    float bias = max(0.0025 * (1.0 - dot(N, L)), 0.0006);
+    vec2 texel = 1.0 / vec2(textureSize(uShadowMap, 0));
+    float lit = 0.0;
+    for (int x = -1; x <= 1; x++)
+        for (int y = -1; y <= 1; y++) {
+            float closest = texture(uShadowMap, p.xy + vec2(x, y) * texel).r;
+            lit += (p.z - bias <= closest) ? 1.0 : 0.0;
+        }
+    return lit / 9.0;
+}
 
 vec3 blinn(vec3 L, vec3 lightColor, vec3 N, vec3 V, vec3 tex){
     float d = max(dot(N, L), 0.0);
@@ -66,7 +86,8 @@ void main(){
     vec3 N = normalize(vNormal);
     vec3 V = normalize(uViewPos - vPos);
     vec3 c = uMat.emissive + uMat.ambient * tex * uAmbient;
-    c += blinn(normalize(-uSunDir), uSunColor, N, V, tex);
+    vec3 Ls = normalize(-uSunDir);
+    c += blinn(Ls, uSunColor, N, V, tex) * shadowFactor(N, Ls);   // luar com sombra
     if (uLampOn == 1) {
         vec3 Lv = uLampPos - vPos;
         float dist = length(Lv);
@@ -366,6 +387,40 @@ static GLuint makeSkybox() {
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
     return t;
+}
+
+// ============================================================ sombras (shadow mapping da luz da lua)
+static const char* DEPTH_VS = R"(#version 330 core
+layout(location=0) in vec3 aPos;
+uniform mat4 uModel, uLightSpace;
+void main(){ gl_Position = uLightSpace * uModel * vec4(aPos, 1.0); })";
+static const char* DEPTH_FS = R"(#version 330 core
+void main(){ })";
+
+static const int SHADOW_SIZE = 2048;
+static GLuint gShadowFbo = 0, gShadowTex = 0, gDepthProg = 0;
+static bool gShadowPass = false;                                        // true enquanto desenha o mapa de sombra
+static const vec3 SUN_DIR = glm::normalize(vec3(-1.0f, -0.45f, -0.1f)); // luar entrando pela janela (leste para oeste)
+
+static void initShadow() {
+    GLuint v = compileShader(GL_VERTEX_SHADER, DEPTH_VS), f = compileShader(GL_FRAGMENT_SHADER, DEPTH_FS);
+    gDepthProg = glCreateProgram();
+    glAttachShader(gDepthProg, v); glAttachShader(gDepthProg, f); glLinkProgram(gDepthProg);
+    glDeleteShader(v); glDeleteShader(f);
+    glGenTextures(1, &gShadowTex); glBindTexture(GL_TEXTURE_2D, gShadowTex);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_DEPTH_COMPONENT24, SHADOW_SIZE, SHADOW_SIZE, 0, GL_DEPTH_COMPONENT, GL_FLOAT, nullptr);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+    const float border[4] = {1, 1, 1, 1};                               // fora do mapa = iluminado
+    glTexParameterfv(GL_TEXTURE_2D, GL_TEXTURE_BORDER_COLOR, border);
+    glGenFramebuffers(1, &gShadowFbo);
+    glBindFramebuffer(GL_FRAMEBUFFER, gShadowFbo);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, gShadowTex, 0);
+    glDrawBuffer(GL_NONE); glReadBuffer(GL_NONE);                       // so profundidade, sem cor
+    if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) std::puts("Framebuffer de sombra incompleto");
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
 // ============================================================ estado do jogo e camera
@@ -777,6 +832,9 @@ static void drawScene(const Meshes& M, const Textures& T, double t) {
     }
 
     // --- vidro da janela: por ultimo, com transparencia (blending) e sem escrever profundidade
+    
+    if (gShadowPass) return;  
+    glEnable(GL_BLEND);
     glEnable(GL_BLEND); glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDepthMask(GL_FALSE);
     glUniform1f(U("uAlpha"), 0.25f);
@@ -809,6 +867,7 @@ int main() {
     gProg = buildProgram();
     gSkyProg = buildSkyProgram();
     gSkyTex = makeSkybox();
+    initShadow();
     Meshes M{makeCube(), makeCylinder(), makeSphere()};
     Textures T = makeTextures();
     hudInit();
@@ -874,6 +933,21 @@ int main() {
         // ---- render
         int w, h; glfwGetFramebufferSize(win, &w, &h);
         if (h == 0) h = 1;
+        // ---- passada de sombra: a cena vista pela lua, gravando so a profundidade
+        const vec3 center(0.0f, 1.5f, 0.0f);
+        mat4 lightView = glm::lookAt(center - SUN_DIR * 10.0f, center, vec3(0, 1, 0));
+        mat4 lightProj = glm::ortho(-6.5f, 6.5f, -6.5f, 6.5f, 1.0f, 22.0f);
+        mat4 lightSpace = lightProj * lightView;
+        glViewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+        glBindFramebuffer(GL_FRAMEBUFFER, gShadowFbo);
+        glClear(GL_DEPTH_BUFFER_BIT);
+        {
+            GLuint saved = gProg; gProg = gDepthProg; glUseProgram(gProg);   // draw() passa a usar o shader de profundidade
+            glUniformMatrix4fv(U("uLightSpace"), 1, GL_FALSE, glm::value_ptr(lightSpace));
+            gShadowPass = true; drawScene(M, T, now); gShadowPass = false;
+            gProg = saved;
+        }
+        glBindFramebuffer(GL_FRAMEBUFFER, 0);
         glViewport(0, 0, w, h);
         glClearColor(0.05f, 0.06f, 0.1f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -887,8 +961,11 @@ int main() {
         glUniform1i(U("uTex"), 0);
         glUniform3fv(U("uViewPos"), 1, glm::value_ptr(camPos));
         glUniform3f(U("uAmbient"), 0.22f, 0.22f, 0.28f);
-        glUniform3f(U("uSunDir"), -0.3f, -1.0f, -0.4f);
-        glUniform3f(U("uSunColor"), 0.18f, 0.18f, 0.25f);
+        glUniform3fv(U("uSunDir"), 1, glm::value_ptr(SUN_DIR));
+        glUniform3f(U("uSunColor"), 0.55f, 0.62f, 0.90f);
+        glUniformMatrix4fv(U("uLightSpace"), 1, GL_FALSE, glm::value_ptr(lightSpace));
+        glActiveTexture(GL_TEXTURE1); glBindTexture(GL_TEXTURE_2D, gShadowTex); glActiveTexture(GL_TEXTURE0);
+        glUniform1i(U("uShadowMap"), 1);
         glUniform3fv(U("uLampPos"), 1, glm::value_ptr(LAMP_LIGHT_POS));
         glUniform3f(U("uLampColor"), 2.0f, 1.7f, 1.2f);
         glUniform1i(U("uLampOn"), G.lampOn ? 1 : 0);
