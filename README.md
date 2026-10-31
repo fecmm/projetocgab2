@@ -3,7 +3,7 @@
 Minijogo de partida única em OpenGL 3.3 Core (C++17, GLFW, GLAD, GLM e stb_image). 
 O jogador explora um quarto à noite e deve achar as 8 moedas douradas escondidas antes de 3 minutos. Sem motores e sem modelos importados: toda a geometria é gerada em código.
 
-**Equipe:** [Emile Noemi], [Fernanda Correia]
+**Equipe:** Emile Noemi, Fernanda Correia  
 **Vídeo:** link do vídeo
 
 ## Como compilar
