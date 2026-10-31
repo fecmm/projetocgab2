@@ -47,8 +47,8 @@ O contador de moedas, o tempo, a mira e a dica de interação aparecem na tela (
 - **Iluminação e materiais:** Blinn-Phong com materiais distintos por objeto; luz direcional
   (luar que entra pela janela, com sombras por shadow mapping), luz pontual (abajur) e
   spot light (lanterna).
-- **Texturas:** procedurais (madeira, piso, tijolo, tecido e metal), imagens PNG carregadas com
-  stb_image (tapete e quadros) e cubemap do céu noturno gerado em código.
+- **Texturas:** procedurais, calculadas em C++ (madeira, piso, tijolo, tecido, metal e o
+  cubemap do céu noturno), e imagens PNG carregadas com stb_image (tapete e quadros).
 - **Extras:** HUD 2D com fonte bitmap, tela inicial, skybox com estrelas e lua, vidro
   transparente.
 - **Jogo:** 8 moedas, 3 minutos, partida única; se o tempo acabar ou o jogador desistir,
