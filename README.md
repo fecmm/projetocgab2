@@ -22,14 +22,14 @@ cmake --build build --config Release
 | Tecla / mouse | Ação |
 |---|---|
 | W / A / S / D | Andar |
-| Shift | Correr |
+| W + SHIFT| Correr |
 | Mouse | Olhar |
 | ENTER | Começar o jogo (tela inicial) |
 | E | Pegar moeda (objeto na mira, no centro da tela) |
 | F | Abrir/fechar armário, gaveta da mesa, gaveta do criado-mudo e baú |
 | G | Ligar/desligar abajur e ventilador de teto |
 | L | Ligar/desligar a lanterna |
-| F1 | Alternar wireframe |
+| F1 + Fn| Alternar wireframe |
 | ESC | Desistir (mostra o resultado parcial); ESC de novo fecha |
 
 O contador de moedas, o tempo, a mira e a dica de interação aparecem na tela (HUD 2D).
