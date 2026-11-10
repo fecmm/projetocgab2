@@ -4,7 +4,7 @@ Minijogo de partida única em OpenGL 3.3 Core (C++17, GLFW, GLAD, GLM e stb_imag
 O jogador explora um quarto à noite e deve achar as 8 moedas douradas escondidas antes de 3 minutos. Sem motores e sem modelos importados: toda a geometria é gerada em código.
 
 **Equipe:** Emile Noemi, Fernanda Correia  
-**Vídeo:** link do vídeo
+**Vídeo:** [link do vídeo](https://youtu.be/lqowRqAl3-Y)
 
 ## Como compilar
 Instale CMake (3.16+), um compilador C++17 e Git. No Linux: `sudo apt install build-essential cmake git xorg-dev libgl1-mesa-dev`.
