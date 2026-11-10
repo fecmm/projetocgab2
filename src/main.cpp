@@ -691,8 +691,8 @@ static void drawHud(int w, int h, double now, const Target& tgt) {
         hudTextCentered(cx, y, sc, "ENCONTRE AS " + std::to_string(total) + " MOEDAS ESCONDIDAS EM " + std::to_string((int)(TIME_LIMIT / 60)) + " MINUTOS", white);
         y += 3.0f * line;
         const char* cmds[] = {
-            "W A S D: ANDAR", "SHIFT: CORRER", "MOUSE: OLHAR", "E: PEGAR MOEDA",
-            "F: ABRIR / FECHAR", "G: LIGAR / DESLIGAR", "L: LANTERNA", "F1: WIREFRAME", "ESC: DESISTIR"
+            "W A S D: ANDAR", "W COM SHIFT: CORRER", "MOUSE: OLHAR", "E: PEGAR MOEDA",
+            "F: ABRIR / FECHAR", "G: LIGAR / DESLIGAR", "L: LANTERNA", "F1 COM Fn: WIREFRAME", "ESC: DESISTIR"
         };
         for (const char* c : cmds) { hudTextCentered(cx, y, sc, c, white); y += 1.8f * line; }
         y += 1.5f * line;
